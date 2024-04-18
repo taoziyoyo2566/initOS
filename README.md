@@ -1,0 +1,2 @@
+# initOS
+os init
