@@ -32,7 +32,7 @@ apt-get update && apt-get upgrade -y && apt-get dist-upgrade -y
 
 # 安装基本软件包
 echo "正在安装必要软件包..."
-apt-get install -y curl vim ufw jq sudo fail2ban unattended-upgrades apt-listchanges bash-completion git net-tools 
+apt-get install -y curl vim ufw jq sudo fail2ban unattended-upgrades apt-listchanges bash-completion git net-tools dnsutils gh
 
 # 配置自动更新
 echo "正在配置自动安全更新..."
