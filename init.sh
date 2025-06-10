@@ -398,24 +398,14 @@ configure_firewall() {
     log_success "UFW防火墙配置完成"
 }
 
-# Fail2ban配置 - 修复版本
+# Fail2ban配置
 configure_fail2ban() {
     log_info "配置Fail2ban入侵防护"
-    
-    # 停止服务以安全配置
-    systemctl stop fail2ban 2>/dev/null || true
     
     # 备份现有配置
     backup_file "/etc/fail2ban/jail.local"
     
-    # 确保必需的日志文件存在
-    log_info "检查并创建必需的日志文件"
-    touch /var/log/auth.log
-    chmod 640 /var/log/auth.log
-    chown root:adm /var/log/auth.log 2>/dev/null || chown root:root /var/log/auth.log
-    
-    # 创建基本的、经过验证的配置
-    log_info "创建Fail2ban基本配置"
+    # 创建jail.local配置
     cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
 # 基本设置
@@ -531,11 +521,20 @@ port = $SSH_PORT
 filter = sshd
 logpath = /var/log/auth.log
 maxretry = 3
-bantime = 3600
 EOF
-        systemctl reload fail2ban
-        log_warn "已恢复为基本配置"
-    fi
+
+    # 创建Redis过滤器
+    mkdir -p /etc/fail2ban/filter.d
+    cat > /etc/fail2ban/filter.d/redis-server.conf << 'EOF'
+[Definition]
+failregex = ^ WARNING .* Client .* @ <HOST> .*
+ignoreregex =
+EOF
+    
+    systemctl enable fail2ban
+    restart_service "fail2ban"
+    
+    log_success "Fail2ban配置完成"
 }
 
 # 系统安全参数配置
@@ -1048,21 +1047,7 @@ show_system_status() {
     
     if command -v fail2ban-client >/dev/null 2>&1; then
         echo -e "\n${BLUE}===== Fail2ban状态 =====${NC}"
-        if systemctl is-active --quiet fail2ban; then
-            echo "Fail2ban服务: 运行中"
-            echo "活动的jail:"
-            fail2ban-client status 2>/dev/null | grep "Jail list:" | cut -d: -f2 | tr ',' '\n' | sed 's/^[ \t]*/- /'
-            
-            # 显示SSH jail详细信息
-            if fail2ban-client status sshd >/dev/null 2>&1; then
-                echo -e "\nSSH保护详情:"
-                fail2ban-client status sshd 2>/dev/null | grep -E "Currently (failed|banned)"
-            fi
-        else
-            echo "Fail2ban服务: 未运行"
-            echo "最近错误:"
-            journalctl -u fail2ban --no-pager -l -n 3 2>/dev/null | tail -3
-        fi
+        fail2ban-client status 2>/dev/null || echo "Fail2ban未运行"
     fi
 }
 
@@ -1092,14 +1077,6 @@ show_config_history() {
     echo -e "\n${BLUE}===== UFW规则摘要 =====${NC}"
     if command -v ufw >/dev/null 2>&1; then
         ufw status 2>/dev/null || echo "UFW未配置"
-    fi
-
-    echo -e "\n${BLUE}===== Fail2ban配置摘要 =====${NC}"
-    if [ -f /etc/fail2ban/jail.local ]; then
-        echo "当前配置:"
-        grep -E "^\[|^enabled" /etc/fail2ban/jail.local
-    else
-        echo "未找到配置文件"
     fi
 }
 
