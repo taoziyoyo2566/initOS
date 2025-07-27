@@ -522,7 +522,9 @@ filter = sshd
 logpath = /var/log/auth.log
 maxretry = 3
 EOF
-
+        systemctl reload fail2ban
+    fi
+    
     # 创建Redis过滤器
     mkdir -p /etc/fail2ban/filter.d
     cat > /etc/fail2ban/filter.d/redis-server.conf << 'EOF'
