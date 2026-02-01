@@ -134,7 +134,7 @@ manage_ssh_keys() {
 
 # --- 6. 用户深度管理 (找回原脚本功能) ---
 manage_users() {
-    echo -e "1) 新建用户 2) 修改权限(Sudo/Docker) 3) 删除用户 4) 列出所有普通用户"
+    echo -e "1) 新建用户 2) 修改权限(Sudo/Docker) 3) 删除用户 4) 列出所有普通用户 5) 设置 Sudo 免密"
     read -p "选择: " uopt
     case $uopt in
         1)
@@ -152,6 +152,27 @@ manage_users() {
             ;;
         4)
             awk -F: '$3 >= 1000 && $3 < 65534 {print $1 " (UID: "$3")"}' /etc/passwd
+            ;;
+        5)
+            read -p "用户名: " un
+            id "$un" &>/dev/null || { print_error "用户不存在"; return; }
+            mkdir -p /etc/sudoers.d
+            local sudoer="/etc/sudoers.d/${un}-nopasswd"
+            if [ -f "$sudoer" ] && ! prompt_yes_no "已存在 ${sudoer}，覆盖?"; then
+                return
+            fi
+            echo "${un} ALL=(ALL) NOPASSWD:ALL" > "$sudoer"
+            chmod 440 "$sudoer"
+            if command_exists visudo; then
+                if visudo -cf /etc/sudoers >/dev/null 2>&1; then
+                    print_success "已设置 ${un} sudo 免密。"
+                else
+                    rm -f "$sudoer"
+                    print_error "sudoers 校验失败，已回滚。"
+                fi
+            else
+                print_warning "未检测到 visudo，无法校验 sudoers。"
+            fi
             ;;
     esac
 }
