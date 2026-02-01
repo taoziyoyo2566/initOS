@@ -159,11 +159,28 @@ manage_users() {
 # --- 7. 防火墙与安全策略 (找回功能) ---
 manage_security() {
     print_info "配置安全策略 (UFW & Fail2ban)..."
+    # 确保依赖存在
+    if ! command_exists ufw; then
+        apt-get update || true
+        apt-get install -y ufw || true
+    fi
+    if ! command_exists fail2ban; then
+        apt-get update || true
+        apt-get install -y fail2ban || true
+    fi
     ufw default deny incoming
     ufw default allow outgoing
     
-    # 自动探测 SSH 端口并放行
-    local sp=$(sshd -T 2>/dev/null | awk '/^port / {print $2}')
+    # 自动探测 SSH 端口并放行，探测失败时回退到 22
+    local sp=""
+    sp=$(sshd -T 2>/dev/null | awk '/^port / {print $2; exit}') || true
+    if [[ -z "$sp" || ! "$sp" =~ ^[0-9]+$ ]]; then
+        sp=$(grep -E '^[[:space:]]*Port[[:space:]]+[0-9]+' /etc/ssh/sshd_config 2>/dev/null | tail -1 | awk '{print $2}') || true
+    fi
+    if [[ -z "$sp" || ! "$sp" =~ ^[0-9]+$ ]]; then
+        sp=22
+        print_warning "无法自动解析 SSH 端口，已默认放行 22/tcp。如有自定义端口请手动添加防火墙规则。"
+    fi
     ufw allow "$sp/tcp" comment 'SSH'
     
     prompt_yes_no "放行 80/443?" && ufw allow http && ufw allow https
@@ -185,6 +202,69 @@ EOF
     print_success "安全加固完成。"
 }
 
+# --- Docker 安装（可选启用 IPv6） ---
+configure_docker_ipv6() {
+    local daemon=/etc/docker/daemon.json
+    mkdir -p /etc/docker
+
+    # 尝试使用 jq 合并现有配置，失败则写入最小配置
+    if ! command_exists jq; then
+        apt-get update || true
+        apt-get install -y jq || true
+    fi
+
+    if command_exists jq && [ -f "$daemon" ]; then
+        local tmp
+        tmp=$(mktemp)
+        if jq '. + {"ipv6": true, "ip6tables": true, "fixed-cidr-v6": (."fixed-cidr-v6" // "fd00:dead:beef::/64")}' "$daemon" 2>/dev/null > "$tmp"; then
+            mv "$tmp" "$daemon"
+        else
+            rm -f "$tmp"
+            cat > "$daemon" << 'EOF'
+{
+  "ipv6": true,
+  "ip6tables": true,
+  "fixed-cidr-v6": "fd00:dead:beef::/64"
+}
+EOF
+        fi
+    else
+        cat > "$daemon" << 'EOF'
+{
+  "ipv6": true,
+  "ip6tables": true,
+  "fixed-cidr-v6": "fd00:dead:beef::/64"
+}
+EOF
+    fi
+
+    systemctl restart docker || print_warning "Docker 重启失败，请手动检查并重启服务。"
+    print_success "Docker 已启用 IPv6 (默认前缀 fd00:dead:beef::/64)。可编辑 /etc/docker/daemon.json 后重启 docker 自定义网络。"
+}
+
+install_docker() {
+    print_info "安装 Docker..."
+    local skip_install=0
+    if command_exists docker; then
+        print_info "检测到已安装 Docker: $(docker --version 2>/dev/null | head -1)"
+        if prompt_yes_no "跳过重新安装并直接配置 Docker IPv6？" "y"; then
+            skip_install=1
+        fi
+    fi
+
+    if [ "$skip_install" -eq 0 ]; then
+        curl -fsSL https://get.docker.com | sh
+    else
+        print_info "已跳过 Docker 重新安装。"
+    fi
+
+    if prompt_yes_no "是否启用 Docker 的 IPv6 支持？"; then
+        configure_docker_ipv6
+    else
+        print_info "已跳过 Docker IPv6 配置，可稍后手动运行本脚本再选择启用。"
+    fi
+}
+
 # --- 8. 系统审计与历史 (找回功能) ---
 show_history() {
     echo -e "\n${BLUE}--- 操作日志 ---${NC}"
@@ -203,7 +283,7 @@ main() {
         echo "1. 更新系统(及资源限额)  2. Swap 管理(带预检)"
         echo "3. BBR/网络优化(FastOpen)  4. SSH 管理(含密钥审计)"
         echo "5. 用户深度管理           6. 防火墙与安全加固"
-        echo "7. 安装 Docker           8. 查看操作历史与状态"
+        echo "7. 安装 Docker(可选IPv6) 8. 查看操作历史与状态"
         echo "0. 退出"
         read -p "执行操作: " choice
 
@@ -214,7 +294,7 @@ main() {
             4) manage_ssh ;;
             5) manage_users ;;
             6) manage_security ;;
-            7) curl -fsSL https://get.docker.com | sh ;;
+            7) install_docker ;;
             8) show_history ; uptime ;;
             0) exit 0 ;;
             *) print_warning "选择无效" ;;
