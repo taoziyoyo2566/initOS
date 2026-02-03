@@ -102,6 +102,9 @@ manage_ssh() {
             ;;
         2)
             if prompt_yes_no "是否禁用密码登录 (改为仅密钥)?"; then
+		# 在脚本修改配置前添加
+                sed -i 's/^\(PubkeyAuthentication\)/#\1/' /etc/ssh/sshd_config
+                sed -i 's/^\(PasswordAuthentication\)/#\1/' /etc/ssh/sshd_config
                 echo "PasswordAuthentication no" >> "$target"
             else
                 echo "PasswordAuthentication yes" >> "$target"
