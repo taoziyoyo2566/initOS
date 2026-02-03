@@ -300,8 +300,8 @@ show_history() {
 # --- 主程序逻辑 ---
 main() {
     [ "$(id -u)" -ne 0 ] && { echo "请用 Root 运行"; exit 1; }
-    mkdir -p "$CONFIG_DIR" "$BACKUP_DIR"
-    
+    mkdir -p "$CONFIG_DIR" "$BACKUP_DIR" "$(dirname "$LOG_FILE")"
+    touch "$LOG_FILE" 2>/dev/null || LOG_FILE="/tmp/system_init.log"
     while true; do
         echo -e "\n${BLUE}===== 1700行级完整功能版 + BBR增强 =====${NC}"
         echo "1. 更新系统(及资源限额)  2. Swap 管理(带预检)"
