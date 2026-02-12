@@ -645,8 +645,11 @@ create_user() {
     read -p "Add user to sudo group? (y/n): " add_sudo
     if [ "$add_sudo" = "y" ]; then
         usermod -aG sudo "$new_user"
-        echo "$new_user ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/$new_user"
-        chmod 440 "/etc/sudoers.d/$new_user"
+        read -p "Enable passwordless sudo for this user? (high risk, y/n): " add_nopasswd
+        if [ "$add_nopasswd" = "y" ]; then
+            echo "$new_user ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/$new_user"
+            chmod 440 "/etc/sudoers.d/$new_user"
+        fi
     fi
     
     read -p "Add user to docker group? (y/n): " add_docker

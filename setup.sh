@@ -12,15 +12,19 @@ fi
 echo "===== 设置Swap分区 ====="
 read -p "请输入Swap大小（单位：G），直接回车跳过: " swap_size
 if [[ -n "$swap_size" ]]; then
-    echo "设置${swap_size}G的Swap分区..."
-    fallocate -l ${swap_size}G /swapfile || dd if=/dev/zero of=/swapfile bs=1G count=$swap_size
-    chmod 600 /swapfile
-    mkswap /swapfile
-    swapon /swapfile
-    echo "/swapfile none swap sw 0 0" >> /etc/fstab
-    echo "vm.swappiness=10" >> /etc/sysctl.conf
-    sysctl -p
-    echo "Swap设置完成。"
+    if [[ ! "$swap_size" =~ ^[0-9]+$ ]] || [[ "$swap_size" -le 0 ]]; then
+        echo "Swap大小无效，跳过。"
+    else
+        echo "设置${swap_size}G的Swap分区..."
+        fallocate -l "${swap_size}G" /swapfile || dd if=/dev/zero of=/swapfile bs=1G count="$swap_size"
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+        grep -q "/swapfile none swap sw 0 0" /etc/fstab || echo "/swapfile none swap sw 0 0" >> /etc/fstab
+        grep -q "vm.swappiness=10" /etc/sysctl.conf || echo "vm.swappiness=10" >> /etc/sysctl.conf
+        sysctl -p
+        echo "Swap设置完成。"
+    fi
 else
     echo "未设置Swap分区。"
 fi
@@ -63,8 +67,13 @@ failregex = ^ WARNING .* Client .* @ <HOST> .*
 ignoreregex =
 EOF
 
-# 安装Docker
-curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
+# 安装Docker（高风险操作，需确认）
+read -p "是否安装Docker（将执行官方安装脚本）？(y/n): " install_docker
+if [[ "$install_docker" == "y" ]]; then
+    curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
+else
+    echo "跳过Docker安装。"
+fi
 
 # 防火墙配置
 ufw default deny incoming
@@ -72,7 +81,10 @@ ufw default allow outgoing
 ufw allow 32798/tcp comment 'SSH'
 ufw allow http comment 'HTTP'
 ufw allow https comment 'HTTPS'
-ufw allow 6379/tcp comment 'Redis'
+read -p "是否开放Redis端口(6379)？(y/n): " open_redis
+if [[ "$open_redis" == "y" ]]; then
+    ufw allow 6379/tcp comment 'Redis'
+fi
 ufw logging on
 
 systemctl enable ufw
@@ -83,21 +95,32 @@ systemctl restart fail2ban
 # SSH配置（简化版）
 sed -i.bak 's/#Port 22/Port 32798/' /etc/ssh/sshd_config
 sed -i 's/PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
-sed -i 's/PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+read -p "是否禁用SSH密码登录（需确保已配置公钥）？(y/n): " disable_password_auth
+if [[ "$disable_password_auth" == "y" ]]; then
+    sed -i 's/PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+else
+    sed -i 's/PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+fi
 systemctl restart sshd
 
 ### 功能3：添加用户 ###
 echo "===== 添加新用户 ====="
 read -p "请输入要创建的用户名: " new_user
 if [[ -n "$new_user" ]]; then
-    useradd -m -s /bin/bash $new_user
-    echo "$new_user:$new_user" | chpasswd
+    useradd -m -s /bin/bash "$new_user"
+    echo "请为用户 ${new_user} 设置登录密码："
+    passwd "$new_user"
     read -p "是否将用户添加到docker组？(y/n): " add_docker
-    [[ "$add_docker" == "y" ]] && usermod -aG docker $new_user
+    [[ "$add_docker" == "y" ]] && usermod -aG docker "$new_user"
     read -p "是否将用户添加到sudo组？(y/n): " add_sudo
-    [[ "$add_sudo" == "y" ]] && usermod -aG sudo $new_user
-    echo "$new_user ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$new_user
-    chmod 440 /etc/sudoers.d/$new_user
+    if [[ "$add_sudo" == "y" ]]; then
+        usermod -aG sudo "$new_user"
+        read -p "是否启用免密sudo（高风险，不推荐）？(y/n): " add_nopasswd
+        if [[ "$add_nopasswd" == "y" ]]; then
+            echo "$new_user ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/$new_user"
+            chmod 440 "/etc/sudoers.d/$new_user"
+        fi
+    fi
     echo "用户$new_user创建完成。"
 else
     echo "未创建任何用户。"
@@ -108,12 +131,13 @@ echo "===== 为用户添加SSH密钥 ====="
 read -p "请输入要添加密钥的用户名（直接回车跳过）: " key_user
 if [[ -n "$key_user" ]]; then
     if id "$key_user" &>/dev/null; then
-        mkdir -p /home/$key_user/.ssh
+        user_home=$(getent passwd "$key_user" | cut -d: -f6)
+        mkdir -p "$user_home/.ssh"
         read -p "请粘贴公钥内容: " pubkey
-        echo "$pubkey" > /home/$key_user/.ssh/authorized_keys
-        chmod 700 /home/$key_user/.ssh
-        chmod 600 /home/$key_user/.ssh/authorized_keys
-        chown -R $key_user:$key_user /home/$key_user/.ssh
+        echo "$pubkey" >> "$user_home/.ssh/authorized_keys"
+        chmod 700 "$user_home/.ssh"
+        chmod 600 "$user_home/.ssh/authorized_keys"
+        chown -R "$key_user:$key_user" "$user_home/.ssh"
         echo "已成功为用户$key_user添加SSH密钥。"
     else
         echo "用户$key_user 不存在。"
